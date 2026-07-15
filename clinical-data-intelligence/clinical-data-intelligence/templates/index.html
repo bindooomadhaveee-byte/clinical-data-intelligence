@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Clinical Data Intelligence</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+  <style>
+    :root { --bg:#0b1220; --card:#141d2f; --text:#e2e8f0; --accent:#34d399; --muted:#94a3b8; --danger:#f87171; --warn:#fbbf24; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
+    header { padding: 24px 32px; border-bottom: 1px solid #26324a; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; }
+    header h1 { margin:0; font-size: 20px; }
+    header p { margin:4px 0 0; color:var(--muted); font-size:13px; }
+    button { background:var(--accent); border:none; color:#04140d; font-weight:600; padding:7px 14px; border-radius:6px; cursor:pointer; }
+    main { padding: 24px 32px; display:grid; grid-template-columns: repeat(auto-fit, minmax(320px,1fr)); gap:20px; }
+    .card { background:var(--card); border-radius:10px; padding:18px; border:1px solid #26324a; }
+    .card h2 { margin:0 0 12px; font-size:14px; color:var(--muted); text-transform:uppercase; letter-spacing:0.06em; }
+    .stat-big { font-size:36px; font-weight:700; color:var(--accent); }
+    .stat-row { display:flex; justify-content:space-between; padding:5px 0; font-size:13px; border-bottom:1px dashed #26324a; }
+    .stat-row:last-child { border-bottom:none; }
+    canvas { max-height:260px; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th, td { text-align:left; padding:6px 8px; border-bottom:1px solid #26324a; }
+    th { color:var(--muted); font-weight:600; }
+    .badge { padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; }
+    .badge-low { background:#134e2f; color:#6ee7b7; }
+    .badge-medium { background:#4a3b0e; color:var(--warn); }
+    .badge-high { background:#4a1f1f; color:#fca5a5; }
+    .badge-critical { background:#5c1a1a; color:var(--danger); }
+    .wide { grid-column: 1 / -1; }
+    #status { color: var(--danger); font-size:13px; padding: 0 32px 24px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Clinical Data Intelligence</h1>
+      <p>Rule-based risk scoring &amp; population health overview</p>
+    </div>
+    <button onclick="loadAll()">Refresh</button>
+  </header>
+
+  <main>
+    <div class="card">
+      <h2>Patients in Dataset</h2>
+      <div class="stat-big" id="patientCount">–</div>
+    </div>
+
+    <div class="card">
+      <h2>Risk Level Distribution</h2>
+      <canvas id="riskChart"></canvas>
+    </div>
+
+    <div class="card">
+      <h2>Average Risk Score by Age Group</h2>
+      <canvas id="ageRiskChart"></canvas>
+    </div>
+
+    <div class="card">
+      <h2>Top Contributing Risk Factors (population total)</h2>
+      <div id="factorsList"></div>
+    </div>
+
+    <div class="card">
+      <h2>Vitals Summary</h2>
+      <div id="vitalsSummary"></div>
+    </div>
+
+    <div class="card wide">
+      <h2>Highest Risk Patients</h2>
+      <table id="patientsTable">
+        <thead>
+          <tr><th>Patient ID</th><th>Risk Score</th><th>Risk Level</th><th>Top Factor</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </main>
+
+  <div id="status"></div>
+
+  <script>
+    let riskChart, ageRiskChart;
+
+    function badgeClass(level) {
+      return { Low: 'badge-low', Medium: 'badge-medium', High: 'badge-high', Critical: 'badge-critical' }[level] || '';
+    }
+
+    async function loadAll() {
+      const status = document.getElementById('status');
+      status.textContent = '';
+      try {
+        const res = await fetch('/api/summary');
+        const data = await res.json();
+        if (data.error) { status.textContent = 'Error: ' + data.error; return; }
+        render(data);
+      } catch (err) {
+        status.textContent = 'Request failed: ' + err;
+      }
+    }
+
+    function render(data) {
+      document.getElementById('patientCount').textContent = data.patient_count;
+
+      const riskCtx = document.getElementById('riskChart');
+      const order = ['Low', 'Medium', 'High', 'Critical'];
+      const riskLabels = order.filter(k => k in data.risk_distribution);
+      const riskValues = riskLabels.map(k => data.risk_distribution[k]);
+      const riskColors = { Low: '#34d399', Medium: '#fbbf24', High: '#fb923c', Critical: '#f87171' };
+      if (riskChart) riskChart.destroy();
+      riskChart = new Chart(riskCtx, {
+        type: 'doughnut',
+        data: { labels: riskLabels, datasets: [{ data: riskValues, backgroundColor: riskLabels.map(l => riskColors[l]) }] },
+        options: { plugins: { legend: { labels: { color: '#e2e8f0' } } } }
+      });
+
+      const ageCtx = document.getElementById('ageRiskChart');
+      const ageLabels = Object.keys(data.avg_risk_by_age);
+      const ageValues = Object.values(data.avg_risk_by_age);
+      if (ageRiskChart) ageRiskChart.destroy();
+      ageRiskChart = new Chart(ageCtx, {
+        type: 'bar',
+        data: { labels: ageLabels, datasets: [{ data: ageValues, backgroundColor: '#34d399' }] },
+        options: {
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: '#94a3b8' }, grid: { color: '#26324a' } },
+            y: { ticks: { color: '#94a3b8' }, grid: { color: '#26324a' }, beginAtZero: true }
+          }
+        }
+      });
+
+      const factorsDiv = document.getElementById('factorsList');
+      factorsDiv.innerHTML = data.top_risk_factors.map(([name, pts]) =>
+        `<div class="stat-row"><span>${name.replace(/_/g, ' ')}</span><span>${pts}</span></div>`
+      ).join('');
+
+      const v = data.vitals;
+      const vitalsDiv = document.getElementById('vitalsSummary');
+      vitalsDiv.innerHTML = Object.entries(v).map(([name, s]) =>
+        `<div class="stat-row"><span>${name.replace(/_/g, ' ')}</span><span>${s.avg} (min ${s.min} / max ${s.max})</span></div>`
+      ).join('');
+
+      const tbody = document.querySelector('#patientsTable tbody');
+      tbody.innerHTML = data.high_risk_patients.map(p => {
+        const topFactor = Object.entries(p.factors).sort((a, b) => b[1] - a[1])[0];
+        return `<tr>
+          <td>${p.patient_id}</td>
+          <td>${p.total_score}</td>
+          <td><span class="badge ${badgeClass(p.risk_level)}">${p.risk_level}</span></td>
+          <td>${topFactor ? topFactor[0].replace(/_/g, ' ') : '–'}</td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="4">No high-risk patients found</td></tr>';
+    }
+
+    loadAll();
+  </script>
+</body>
+</html>
